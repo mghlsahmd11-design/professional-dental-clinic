@@ -13,7 +13,7 @@ export default function AdminLayout() {
     const unsubscribe = auth.onAuthStateChanged((currentUser) => {
       setUser(currentUser);
       if (!currentUser) {
-        navigate('/admin');
+        navigate('/admin/login');
       }
     });
     return () => unsubscribe();
@@ -28,12 +28,12 @@ export default function AdminLayout() {
   }
 
   if (user === null) {
-    return <Navigate to="/admin" replace />;
+    return <Navigate to="/admin/login" replace />;
   }
 
   const handleLogout = async () => {
     await auth.signOut();
-    navigate('/admin');
+    navigate('/admin/login');
   };
 
   const navItems = [

@@ -1,0 +1,125 @@
+{
+  "entities": {
+    "Admin": {
+      "title": "Admin",
+      "description": "Administrator roles",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string"
+        }
+      },
+      "required": ["email"]
+    },
+    "Appointment": {
+      "title": "Appointment",
+      "description": "Patient appointment booking",
+      "type": "object",
+      "properties": {
+        "patientName": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 150
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "service": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "appointmentDate": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "appointmentTime": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Pending", "Confirmed", "Declined", "Completed"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["patientName", "email", "phone", "service", "appointmentDate", "appointmentTime", "status", "createdAt"]
+    },
+    "Service": {
+      "title": "Service",
+      "description": "Dental service offered",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 150
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "image": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["title", "description", "image", "createdAt"]
+    },
+    "Content": {
+      "title": "Content",
+      "description": "CMS Content",
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "string",
+          "maxLength": 5000
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["value", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/admins/{uid}": {
+      "schema": {
+        "$ref": "#/entities/Admin"
+      },
+      "description": "List of admin users"
+    },
+    "/appointments/{appointmentId}": {
+      "schema": {
+        "$ref": "#/entities/Appointment"
+      },
+      "description": "Booked appointments"
+    },
+    "/services/{serviceId}": {
+      "schema": {
+        "$ref": "#/entities/Service"
+      },
+      "description": "Dental services"
+    },
+    "/content/{contentKey}": {
+      "schema": {
+        "$ref": "#/entities/Content"
+      },
+      "description": "CMS content managed by admin"
+    }
+  }
+}

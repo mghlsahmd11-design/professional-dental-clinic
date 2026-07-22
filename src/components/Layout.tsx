@@ -3,6 +3,7 @@ import { NavLink } from 'react-router-dom';
 import { Stethoscope, Menu, X } from 'lucide-react';
 import { useState } from 'react';
 import { Outlet } from 'react-router-dom';
+import WhatsAppButton from './WhatsAppButton';
 
 export default function Layout() {
   const [isOpen, setIsOpen] = useState(false);
@@ -137,6 +138,7 @@ export default function Layout() {
           </div>
         </div>
       </footer>
+      <WhatsAppButton />
     </div>
   );
 }

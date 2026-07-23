@@ -1,190 +1,317 @@
+import React from 'react';
 import { useEffect, useState } from 'react';
-import { collection, query, orderBy, onSnapshot, doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { collection, query, onSnapshot, doc, deleteDoc, orderBy } from 'firebase/firestore';
 import { db } from '../../firebase';
-import { Calendar, Clock, User, Phone, Mail, FileText } from 'lucide-react';
-
-interface Appointment {
-  id: string;
-  patientName: string;
-  email: string;
-  phone: string;
-  service: string;
-  appointmentDate: string;
-  appointmentTime: string;
-  message?: string;
-  status: 'Pending' | 'Confirmed' | 'Declined' | 'Completed';
-  createdAt: string;
-}
+import { format } from 'date-fns';
+import { Search, Filter, Download, Printer, MoreVertical, Edit2, Trash2, ChevronLeft, ChevronRight, CheckSquare, Square } from 'lucide-react';
+import toast from 'react-hot-toast';
+import AppointmentDetailsModal from '../../components/admin/AppointmentDetailsModal';
 
 export default function AdminAppointments() {
-  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [appointments, setAppointments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState('All');
-  const [search, setSearch] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [dateFilter, setDateFilter] = useState('');
+  
+  // Selection
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+
+  // Modal
+  const [selectedAppointment, setSelectedAppointment] = useState<any | null>(null);
 
   useEffect(() => {
     const q = query(collection(db, 'appointments'), orderBy('createdAt', 'desc'));
-    const unsubscribeDocs = onSnapshot(q, (snapshot) => {
-      const apps = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Appointment));
-      setAppointments(apps);
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setAppointments(data);
       setLoading(false);
-    }, (error) => {
-      console.error("Error fetching appointments:", error);
     });
-
-    return () => unsubscribeDocs();
+    return () => unsubscribe();
   }, []);
 
-  const handleStatusChange = async (id: string, newStatus: string) => {
-    try {
-      await updateDoc(doc(db, 'appointments', id), { status: newStatus });
-    } catch (error) {
-      console.error("Error updating status:", error);
-      alert("Failed to update status.");
-    }
-  };
-
-  const handleDelete = async (id: string) => {
-    if (confirm("Are you sure you want to delete this appointment?")) {
+  const handleDelete = async (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (window.confirm('Are you sure you want to delete this appointment?')) {
       try {
         await deleteDoc(doc(db, 'appointments', id));
+        toast.success('Appointment deleted');
+        setSelectedIds(prev => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
       } catch (error) {
-        console.error("Error deleting appointment:", error);
-        alert("Failed to delete appointment.");
+        toast.error('Failed to delete appointment');
       }
     }
   };
 
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+    if (window.confirm(`Are you sure you want to delete ${selectedIds.size} appointments?`)) {
+      try {
+        await Promise.all(Array.from(selectedIds).map((id: string) => deleteDoc(doc(db, 'appointments', id))));
+        toast.success('Appointments deleted');
+        setSelectedIds(new Set());
+      } catch (error) {
+        toast.error('Failed to delete some appointments');
+      }
+    }
+  };
+
+  const toggleSelection = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    if (selectedIds.size === currentItems.length && currentItems.length > 0) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(currentItems.map(item => item.id)));
+    }
+  };
+
+  // Filter and sort
   const filteredAppointments = appointments.filter(app => {
-    const matchesFilter = filter === 'All' || app.status === filter;
-    const matchesSearch = app.patientName.toLowerCase().includes(search.toLowerCase()) || 
-                          app.email.toLowerCase().includes(search.toLowerCase()) ||
-                          app.phone.includes(search);
-    return matchesFilter && matchesSearch;
+    const matchesSearch = 
+      (app.name?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+      (app.email?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+      (app.phone || '').includes(searchTerm);
+      
+    const matchesStatus = statusFilter === 'all' || app.status === statusFilter;
+    const matchesDate = !dateFilter || app.date === dateFilter;
+    
+    return matchesSearch && matchesStatus && matchesDate;
   });
 
+  // Pagination logic
+  const totalPages = Math.ceil(filteredAppointments.length / itemsPerPage);
+  const currentItems = filteredAppointments.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
+  const exportCSV = () => {
+    const headers = ['ID,Patient,Phone,Email,Service,Date,Time,Status,Created At\n'];
+    const rows = filteredAppointments.map((a, i) => 
+      `${i+1},"${a.name || ''}","${a.phone || ''}","${a.email || ''}","${a.service || ''}","${a.date || ''}","${a.time || ''}","${a.status || 'New'}","${a.createdAt?.toDate ? format(a.createdAt.toDate(), 'yyyy-MM-dd') : ''}"\n`
+    );
+    const blob = new Blob([headers.join('') + rows.join('')], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `appointments-${format(new Date(), 'yyyy-MM-dd')}.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  };
+
+  const handlePrint = () => {
+    window.print();
+  };
+
   const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'Pending': return 'bg-amber-100 text-amber-800';
-      case 'Confirmed': return 'bg-sky-100 text-sky-800';
-      case 'Completed': return 'bg-emerald-100 text-emerald-800';
-      case 'Declined': return 'bg-rose-100 text-rose-800';
-      default: return 'bg-slate-100 text-slate-800';
+    switch (status?.toLowerCase()) {
+      case 'confirmed': return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400';
+      case 'completed': return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400';
+      case 'cancelled': return 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400';
+      case 'no show': return 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-400';
+      default: return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'; // New
     }
   };
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin w-8 h-8 border-4 border-sky-600 border-t-transparent rounded-full"></div>
-      </div>
-    );
+    return <div className="h-96 flex items-center justify-center">Loading appointments...</div>;
   }
 
   return (
-    <div>
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Appointments</h1>
-        <p className="text-slate-500 text-sm mt-1">Manage patient bookings and schedule.</p>
-      </div>
-        
-      <div className="mb-8 flex flex-col md:flex-row gap-4 justify-between items-center">
-        <div className="flex gap-2 w-full md:w-auto overflow-x-auto pb-2 md:pb-0">
-          {['All', 'Pending', 'Confirmed', 'Completed', 'Declined'].map(f => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className={`px-4 py-2 rounded-full text-[11px] font-bold uppercase tracking-wider whitespace-nowrap transition-colors ${filter === f ? 'bg-slate-900 text-white' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}
-            >
-              {f}
-            </button>
-          ))}
+    <div className="space-y-6 animate-in fade-in duration-500 print:m-0 print:p-0">
+      
+      {/* Header & Actions - Hidden when printing */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 print:hidden">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">Appointments</h1>
+          <p className="text-slate-500 dark:text-slate-400 mt-1">Manage and view all patient bookings.</p>
         </div>
-        <div className="w-full md:w-auto">
-          <input 
-            type="text" 
-            placeholder="Search patients..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full md:w-64 border border-slate-200 rounded-full px-4 py-2 text-sm focus:ring-2 focus:ring-sky-600 focus:outline-none shadow-sm"
-          />
+        
+        <div className="flex items-center gap-2">
+          {selectedIds.size > 0 && (
+            <button 
+              onClick={handleBulkDelete}
+              className="flex items-center gap-2 px-4 py-2 bg-rose-50 dark:bg-rose-900/20 text-rose-600 font-semibold text-sm rounded-lg hover:bg-rose-100 dark:hover:bg-rose-900/40 transition-colors"
+            >
+              <Trash2 className="w-4 h-4" />
+              Delete ({selectedIds.size})
+            </button>
+          )}
+          <button 
+            onClick={exportCSV}
+            className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-semibold text-sm rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors shadow-sm"
+          >
+            <Download className="w-4 h-4" />
+            Export
+          </button>
+          <button 
+            onClick={handlePrint}
+            className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-semibold text-sm rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors shadow-sm"
+          >
+            <Printer className="w-4 h-4" />
+            Print
+          </button>
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+      {/* Filters - Hidden when printing */}
+      <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col sm:flex-row gap-4 print:hidden">
+        <div className="relative flex-1">
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input 
+            type="text"
+            placeholder="Search patients..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-9 pr-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm focus:ring-2 focus:ring-sky-500 outline-none text-slate-900 dark:text-white"
+          />
+        </div>
+        <div className="flex gap-4">
+          <input 
+            type="date"
+            value={dateFilter}
+            onChange={(e) => setDateFilter(e.target.value)}
+            className="px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm focus:ring-2 focus:ring-sky-500 outline-none text-slate-900 dark:text-white"
+          />
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm focus:ring-2 focus:ring-sky-500 outline-none text-slate-900 dark:text-white"
+          >
+            <option value="all">All Status</option>
+            <option value="new">New</option>
+            <option value="confirmed">Confirmed</option>
+            <option value="completed">Completed</option>
+            <option value="cancelled">Cancelled</option>
+            <option value="no show">No Show</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Table */}
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-slate-200">
-            <thead className="bg-slate-50">
-              <tr>
-                <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-400 uppercase tracking-widest">Patient Info</th>
-                <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-400 uppercase tracking-widest">Schedule</th>
-                <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-400 uppercase tracking-widest">Service</th>
-                <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-400 uppercase tracking-widest">Status</th>
-                <th className="px-6 py-4 text-right text-[10px] font-bold text-slate-400 uppercase tracking-widest">Actions</th>
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 text-xs uppercase tracking-wider">
+                <th className="p-4 w-12 print:hidden">
+                  <button onClick={toggleAll} className="text-slate-400 hover:text-sky-600">
+                    {selectedIds.size === currentItems.length && currentItems.length > 0 ? <CheckSquare className="w-5 h-5" /> : <Square className="w-5 h-5" />}
+                  </button>
+                </th>
+                <th className="p-4 font-semibold">#</th>
+                <th className="p-4 font-semibold">Patient</th>
+                <th className="p-4 font-semibold">Contact</th>
+                <th className="p-4 font-semibold">Service</th>
+                <th className="p-4 font-semibold">Date & Time</th>
+                <th className="p-4 font-semibold">Status</th>
+                <th className="p-4 font-semibold text-right print:hidden">Actions</th>
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-slate-100">
-              {filteredAppointments.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="px-6 py-12 text-center text-slate-500 text-sm">
-                    No appointments found.
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
+              {currentItems.length > 0 ? currentItems.map((app, index) => (
+                <tr 
+                  key={app.id} 
+                  onClick={() => setSelectedAppointment(app)}
+                  className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer group"
+                >
+                  <td className="p-4 print:hidden" onClick={(e) => e.stopPropagation()}>
+                    <button onClick={(e) => toggleSelection(app.id, e)} className={`${selectedIds.has(app.id) ? 'text-sky-600' : 'text-slate-300 dark:text-slate-600 hover:text-slate-400'}`}>
+                      {selectedIds.has(app.id) ? <CheckSquare className="w-5 h-5" /> : <Square className="w-5 h-5" />}
+                    </button>
                   </td>
-                </tr>
-              ) : filteredAppointments.map((app) => (
-                <tr key={app.id} className="hover:bg-slate-50 transition-colors">
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center">
-                      <div className="w-10 h-10 rounded-xl bg-sky-50 flex items-center justify-center text-sky-600 font-bold mr-4 border border-sky-100">
-                        {app.patientName.charAt(0)}
-                      </div>
-                      <div>
-                        <div className="text-sm font-bold text-slate-900 flex items-center gap-1"><User className="w-3 h-3 text-slate-400"/> {app.patientName}</div>
-                        <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-1"><Mail className="w-3 h-3 text-slate-400"/> {app.email}</div>
-                        <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5"><Phone className="w-3 h-3 text-slate-400"/> {app.phone}</div>
-                      </div>
-                    </div>
+                  <td className="p-4 text-sm text-slate-500 dark:text-slate-400 font-medium">
+                    {(currentPage - 1) * itemsPerPage + index + 1}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm font-bold text-slate-900 flex items-center gap-1"><Calendar className="w-4 h-4 text-slate-400"/> {app.appointmentDate}</div>
-                    <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-1 font-medium"><Clock className="w-4 h-4 text-slate-400"/> {app.appointmentTime}</div>
+                  <td className="p-4">
+                    <p className="text-sm font-bold text-slate-900 dark:text-white">{app.name}</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">ID: {app.id.slice(0, 8)}</p>
                   </td>
-                  <td className="px-6 py-4">
-                    <div className="text-sm font-bold text-slate-900 mb-1">{app.service}</div>
-                    {app.message && (
-                      <div className="text-[11px] text-slate-500 bg-slate-50 border border-slate-100 p-2 rounded max-w-xs truncate flex items-center gap-1" title={app.message}>
-                        <FileText className="w-3 h-3 shrink-0 text-slate-400"/> {app.message}
-                      </div>
-                    )}
+                  <td className="p-4">
+                    <p className="text-sm text-slate-700 dark:text-slate-300">{app.phone || 'N/A'}</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{app.email || 'N/A'}</p>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`px-2.5 py-1 inline-flex text-[10px] uppercase tracking-wider font-bold rounded-full ${getStatusColor(app.status)}`}>
-                      {app.status}
+                  <td className="p-4 text-sm text-slate-700 dark:text-slate-300">
+                    {app.service}
+                  </td>
+                  <td className="p-4">
+                    <p className="text-sm font-medium text-slate-900 dark:text-white">{app.date}</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{app.time}</p>
+                  </td>
+                  <td className="p-4">
+                    <span className={`px-2.5 py-1 rounded-full text-xs font-semibold capitalize whitespace-nowrap ${getStatusColor(app.status || 'new')}`}>
+                      {app.status || 'New'}
                     </span>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                    <select 
-                      value={app.status}
-                      onChange={(e) => handleStatusChange(app.id, e.target.value)}
-                      className="bg-white border border-slate-200 rounded-lg px-2 py-1 mr-2 text-xs font-bold text-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-500 shadow-sm cursor-pointer"
-                    >
-                      <option value="Pending">Pending</option>
-                      <option value="Confirmed">Confirmed</option>
-                      <option value="Completed">Completed</option>
-                      <option value="Declined">Declined</option>
-                    </select>
+                  <td className="p-4 text-right print:hidden">
                     <button 
-                      onClick={() => handleDelete(app.id)}
-                      className="text-rose-500 hover:text-rose-700 transition-colors text-xs font-bold uppercase tracking-wider"
+                      onClick={(e) => handleDelete(app.id, e)}
+                      className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
                     >
-                      Delete
+                      <Trash2 className="w-4 h-4" />
                     </button>
                   </td>
                 </tr>
-              ))}
+              )) : (
+                <tr>
+                  <td colSpan={8} className="p-8 text-center text-slate-500 dark:text-slate-400">
+                    No appointments found matching your criteria.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
+        
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between print:hidden text-sm">
+            <span className="text-slate-500 dark:text-slate-400">
+              Showing {(currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, filteredAppointments.length)} of {filteredAppointments.length}
+            </span>
+            <div className="flex gap-1">
+              <button 
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 text-slate-600 dark:text-slate-300"
+              >
+                <ChevronLeft className="w-5 h-5" />
+              </button>
+              <button 
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages}
+                className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 text-slate-600 dark:text-slate-300"
+              >
+                <ChevronRight className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
+
+      {selectedAppointment && (
+        <AppointmentDetailsModal 
+          appointment={selectedAppointment} 
+          onClose={() => setSelectedAppointment(null)} 
+        />
+      )}
     </div>
   );
 }

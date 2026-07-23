@@ -50,10 +50,10 @@ export default function Layout() {
 
             <div className="hidden md:block">
               <NavLink
-                to="/admin/dashboard"
+                to="/booking"
                 className="px-5 py-2.5 bg-sky-600 text-white rounded-full text-xs font-bold uppercase tracking-wider hover:bg-sky-700 transition-colors shadow-sm inline-block"
               >
-                Admin Dashboard
+                Book Appointment
               </NavLink>
             </div>
 
@@ -86,11 +86,11 @@ export default function Layout() {
               </NavLink>
             ))}
             <NavLink
-              to="/admin/dashboard"
+              to="/booking"
               onClick={() => setIsOpen(false)}
               className="block w-full text-center mt-4 bg-sky-600 text-white px-6 py-3 rounded-full font-medium hover:bg-sky-700 uppercase text-xs tracking-wider font-bold"
             >
-              Admin Dashboard
+              Book Appointment
             </NavLink>
           </div>
         )}

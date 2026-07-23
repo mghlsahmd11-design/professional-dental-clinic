@@ -9,6 +9,58 @@ export default function AppointmentDetailsModal({ appointment, onClose }: { appo
   const [activeTab, setActiveTab] = useState<'details' | 'communication' | 'history'>('details');
   const [internalNotes, setInternalNotes] = useState(appointment.notes || '');
   const [isSavingNotes, setIsSavingNotes] = useState(false);
+  const [status, setStatus] = useState(appointment.status || 'new');
+  const [isEditing, setIsEditing] = useState(false);
+  const [editForm, setEditForm] = useState({
+    date: appointment.date || '',
+    time: appointment.time || '',
+    service: appointment.service || '',
+    name: appointment.name || '',
+    phone: appointment.phone || '',
+    email: appointment.email || ''
+  });
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+
+  const handleSaveEdit = async () => {
+    try {
+      setIsSavingEdit(true);
+      await updateDoc(doc(db, 'appointments', appointment.id), {
+        date: editForm.date,
+        time: editForm.time,
+        service: editForm.service,
+        name: editForm.name,
+        phone: editForm.phone,
+        email: editForm.email
+      });
+      
+      try {
+        await addDoc(collection(db, 'activity_logs'), {
+          action: 'edit_appointment',
+          user: 'Admin',
+          timestamp: serverTimestamp(),
+          details: `Edited appointment details for ${editForm.name}`
+        });
+      } catch (e) {
+        console.error(e);
+      }
+      
+      toast.success('Appointment updated successfully');
+      setIsEditing(false);
+      
+      // Update local appointment object so UI reflects changes
+      appointment.date = editForm.date;
+      appointment.time = editForm.time;
+      appointment.service = editForm.service;
+      appointment.name = editForm.name;
+      appointment.phone = editForm.phone;
+      appointment.email = editForm.email;
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to update appointment');
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
   
   // Communication State
   const [messageType, setMessageType] = useState<'email' | 'whatsapp' | 'sms'>('email');
@@ -49,6 +101,28 @@ export default function AppointmentDetailsModal({ appointment, onClose }: { appo
       toast.error('Message content cannot be empty');
       return;
     }
+
+    if (messageType === 'whatsapp') {
+      // Just open WhatsApp link and log it to Firestore
+      const waNumber = appointment.phone.replace(/[^0-9]/g, '');
+      window.open(`https://wa.me/${waNumber}?text=${encodeURIComponent(messageContent)}`, '_blank');
+      
+      try {
+        await addDoc(collection(db, 'conversations'), {
+          patientId: appointment.email || appointment.phone,
+          patientName: appointment.name,
+          type: 'whatsapp',
+          content: messageContent,
+          sentAt: serverTimestamp(),
+          sentBy: 'Admin'
+        });
+        toast.success('WhatsApp opened and message logged');
+        setMessageContent('');
+      } catch (e) {
+        toast.error('Failed to log WhatsApp message');
+      }
+      return;
+    }
     
     setIsSending(true);
     try {
@@ -63,7 +137,10 @@ export default function AppointmentDetailsModal({ appointment, onClose }: { appo
           })
         });
         
-        if (!response.ok) throw new Error('Email failed');
+        if (!response.ok) {
+          const errData = await response.json();
+          throw new Error(errData.error || 'Email failed to send');
+        }
       }
 
       // Record in Firestore
@@ -79,11 +156,50 @@ export default function AppointmentDetailsModal({ appointment, onClose }: { appo
       toast.success(`${messageType.toUpperCase()} sent successfully`);
       setMessageContent('');
       setMessageTemplate('custom');
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      toast.error(`Failed to send ${messageType}`);
+      toast.error(error.message || `Failed to send ${messageType}`);
     } finally {
       setIsSending(false);
+    }
+  };
+
+  const handleStatusChange = async (newStatus: string) => {
+    try {
+      setIsSavingStatus(true);
+      await updateDoc(doc(db, 'appointments', appointment.id), {
+        status: newStatus
+      });
+      
+      try {
+        await addDoc(collection(db, 'activity_logs'), {
+          action: 'edit_appointment',
+          user: 'Admin',
+          timestamp: serverTimestamp(),
+          details: `Changed status to ${newStatus} for ${appointment.name}`
+        });
+      } catch (e) {
+        console.error(e);
+      }
+      
+      setStatus(newStatus);
+      toast.success('Status updated successfully');
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to update status');
+    } finally {
+      setIsSavingStatus(false);
+    }
+  };
+
+  const getStatusColor = (s: string) => {
+    switch (s?.toLowerCase()) {
+      case 'new': return 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400 border-sky-200 dark:border-sky-800';
+      case 'confirmed': return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800';
+      case 'completed': return 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border-slate-200 dark:border-slate-700';
+      case 'cancelled': return 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400 border-rose-200 dark:border-rose-800';
+      case 'no show': return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border-amber-200 dark:border-amber-800';
+      default: return 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border-slate-200 dark:border-slate-700';
     }
   };
 
@@ -97,9 +213,18 @@ export default function AppointmentDetailsModal({ appointment, onClose }: { appo
           <div>
             <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-3">
               {appointment.name}
-              <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400">
-                {appointment.status || 'New'}
-              </span>
+              <select
+                value={status}
+                onChange={(e) => handleStatusChange(e.target.value)}
+                disabled={isSavingStatus}
+                className={`px-2.5 py-1 rounded-full text-xs font-semibold capitalize whitespace-nowrap border outline-none appearance-none cursor-pointer ${getStatusColor(status)} ${isSavingStatus ? 'opacity-50' : ''}`}
+              >
+                <option value="new">New</option>
+                <option value="confirmed">Confirmed</option>
+                <option value="completed">Completed</option>
+                <option value="cancelled">Cancelled</option>
+                <option value="no show">No Show</option>
+              </select>
             </h2>
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-4">
               <span className="flex items-center gap-1.5"><Calendar className="w-4 h-4" /> {appointment.date || 'N/A'}</span>
@@ -139,36 +264,117 @@ export default function AppointmentDetailsModal({ appointment, onClose }: { appo
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               <div className="space-y-6">
                 <div>
-                  <h3 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider mb-4">Patient Information</h3>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider">Patient Information</h3>
+                    <button 
+                      onClick={() => setIsEditing(!isEditing)}
+                      className="text-xs font-bold text-sky-600 hover:text-sky-700 dark:text-sky-400"
+                    >
+                      {isEditing ? 'Cancel' : 'Edit'}
+                    </button>
+                  </div>
+                  
                   <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-4">
-                    <div className="flex items-center gap-3 text-sm">
-                      <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-500"><User className="w-4 h-4" /></div>
-                      <div>
-                        <p className="text-slate-500 dark:text-slate-400 text-xs">Full Name</p>
-                        <p className="font-semibold text-slate-900 dark:text-white">{appointment.name}</p>
+                    {isEditing ? (
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs text-slate-500 mb-1">Name</label>
+                            <input 
+                              value={editForm.name} 
+                              onChange={e => setEditForm({...editForm, name: e.target.value})}
+                              className="w-full text-sm p-2 border rounded"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-slate-500 mb-1">Phone</label>
+                            <input 
+                              value={editForm.phone} 
+                              onChange={e => setEditForm({...editForm, phone: e.target.value})}
+                              className="w-full text-sm p-2 border rounded"
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs text-slate-500 mb-1">Email</label>
+                            <input 
+                              value={editForm.email} 
+                              onChange={e => setEditForm({...editForm, email: e.target.value})}
+                              className="w-full text-sm p-2 border rounded"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-slate-500 mb-1">Service</label>
+                            <input 
+                              value={editForm.service} 
+                              onChange={e => setEditForm({...editForm, service: e.target.value})}
+                              className="w-full text-sm p-2 border rounded"
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs text-slate-500 mb-1">Date</label>
+                            <input 
+                              type="date"
+                              value={editForm.date} 
+                              onChange={e => setEditForm({...editForm, date: e.target.value})}
+                              className="w-full text-sm p-2 border rounded"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-slate-500 mb-1">Time</label>
+                            <input 
+                              type="time"
+                              value={editForm.time} 
+                              onChange={e => setEditForm({...editForm, time: e.target.value})}
+                              className="w-full text-sm p-2 border rounded"
+                            />
+                          </div>
+                        </div>
+                        <div className="pt-2">
+                          <button 
+                            onClick={handleSaveEdit}
+                            disabled={isSavingEdit}
+                            className="w-full py-2 bg-sky-600 text-white rounded font-bold text-sm"
+                          >
+                            {isSavingEdit ? 'Saving...' : 'Save Changes'}
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-3 text-sm">
-                      <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-500"><Phone className="w-4 h-4" /></div>
-                      <div>
-                        <p className="text-slate-500 dark:text-slate-400 text-xs">Phone</p>
-                        <p className="font-semibold text-slate-900 dark:text-white">{appointment.phone || 'N/A'}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3 text-sm">
-                      <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-500"><Mail className="w-4 h-4" /></div>
-                      <div>
-                        <p className="text-slate-500 dark:text-slate-400 text-xs">Email</p>
-                        <p className="font-semibold text-slate-900 dark:text-white">{appointment.email || 'N/A'}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3 text-sm">
-                      <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-500"><FileText className="w-4 h-4" /></div>
-                      <div>
-                        <p className="text-slate-500 dark:text-slate-400 text-xs">Service</p>
-                        <p className="font-semibold text-slate-900 dark:text-white">{appointment.service || 'N/A'}</p>
-                      </div>
-                    </div>
+                    ) : (
+                      <>
+                        <div className="flex items-center gap-3 text-sm">
+                          <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-500"><User className="w-4 h-4" /></div>
+                          <div>
+                            <p className="text-slate-500 dark:text-slate-400 text-xs">Full Name</p>
+                            <p className="font-semibold text-slate-900 dark:text-white">{appointment.name}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3 text-sm">
+                          <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-500"><Phone className="w-4 h-4" /></div>
+                          <div>
+                            <p className="text-slate-500 dark:text-slate-400 text-xs">Phone</p>
+                            <p className="font-semibold text-slate-900 dark:text-white">{appointment.phone || 'N/A'}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3 text-sm">
+                          <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-500"><Mail className="w-4 h-4" /></div>
+                          <div>
+                            <p className="text-slate-500 dark:text-slate-400 text-xs">Email</p>
+                            <p className="font-semibold text-slate-900 dark:text-white">{appointment.email || 'N/A'}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3 text-sm">
+                          <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-500"><FileText className="w-4 h-4" /></div>
+                          <div>
+                            <p className="text-slate-500 dark:text-slate-400 text-xs">Service</p>
+                            <p className="font-semibold text-slate-900 dark:text-white">{appointment.service || 'N/A'}</p>
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>

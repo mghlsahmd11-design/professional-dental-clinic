@@ -40,9 +40,9 @@ async function startServer() {
       }
 
       res.json({ success: true });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Email sending error:', error);
-      res.status(500).json({ error: 'Failed to send email' });
+      res.status(500).json({ error: error.message || 'Failed to send email' });
     }
   });
 
